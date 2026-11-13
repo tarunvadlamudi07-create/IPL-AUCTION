@@ -1,0 +1,65 @@
+<!doctype html>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IPL Auction</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:720px;margin:0 auto;padding:12px;color:#222}
+input,button,select{font-size:15px;padding:8px;margin:2px;border:1px solid #bbb;border-radius:8px;background:#fff}
+button{cursor:pointer}.big{width:100%;font-size:20px;padding:16px;background:#185FA5;color:#fff;border:0}
+.card{border:1px solid #ddd;border-radius:12px;padding:12px;margin:8px 0}.lead{border:2px solid #185FA5}
+.g{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}.s{font-size:13px;color:#666}
+table{width:100%;font-size:13px;border-collapse:collapse}td,th{padding:4px;border-bottom:1px solid #eee;text-align:left}
+</style>
+<div id="a"></div>
+<script>
+const id=localStorage.getItem('aid')||(()=>{const v=Math.random().toString(36).slice(2);localStorage.setItem('aid',v);return v})();
+let ws,S=null,err='',view=0;
+const fmt=L=>L>=100?(+(L/100).toFixed(2))+' cr':L+' L';
+const inc=b=>b<100?5:b<200?10:b<500?20:25;
+const RN={B:'Batter',W:'Wicketkeeper',A:'All-rounder',O:'Bowler'};
+const SN={M:'Marquee',B:'Capped batters',W:'Wicketkeepers',A:'All-rounders',O:'Bowlers',U:'Uncapped'};
+function conn(first){
+  ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
+  ws.onopen=()=>{if(first)ws.send(JSON.stringify(first))};
+  ws.onmessage=e=>{const d=JSON.parse(e.data);if(d.err){err=d.err}else{S=d;err=''}draw()};
+  ws.onclose=()=>{if(S)setTimeout(()=>conn({t:'join',id,room:S.code}),1500)};
+}
+function send(o){ws.send(JSON.stringify({...o,id}))}
+function create(){
+  const g=k=>+document.getElementById(k).value;
+  const names=document.getElementById('nm').value.split(',').map(s=>s.trim()).filter(Boolean);
+  const n=names.length;
+  conn({t:'create',id,cfg:{n,pu:g('pu'),mn:g('mn'),mx:g('mx'),ov:g('ov'),tm:g('tm')},names});
+}
+function join(){conn({t:'join',id,room:document.getElementById('rc').value.trim()})}
+function nextAmt(){return S.cur.bidder==null?S.cur.p.b:S.cur.bid+inc(S.cur.bid)}
+function maxBid(t){return t.purse-Math.max(0,S.cfg.mn-t.sq.length-1)*30}
+function call(){if(S.cur.bidder==null)return 'Waiting for an opening bid';return S.timer<=3?'Going twice':S.timer<=7?'Going once':'Any more bids?'}
+function draw(){
+  const A=document.getElementById('a');
+  if(!S){
+    A.innerHTML='<h2>IPL auction</h2><div class="card"><b>Create a room</b><br>Teams (comma separated, 2-10)<br><input id="nm" style="width:95%" value="CSK,MI,RCB,KKR,DC,SRH,RR,PBKS"><br>Purse cr <input id="pu" type="number" value="120" style="width:70px"> Min <input id="mn" type="number" value="18" style="width:60px"> Max <input id="mx" type="number" value="25" style="width:60px"> OS <input id="ov" type="number" value="8" style="width:60px"> Timer <input id="tm" type="number" value="20" style="width:60px"><br><button onclick="create()">Create room</button></div><div class="card"><b>Join a room</b><br><input id="rc" placeholder="Room code" maxlength="4"><button onclick="join()">Join</button></div>';
+    return;
+  }
+  let h='<div class="s">Room '+S.code+' | share this code with friends</div>';
+  const me=S.me;
+  if(S.status==='lobby'){
+    h+='<h3>Pick your team</h3><div class="g">'+S.T.map((t,i)=>'<div class="card'+(me.team===i?' lead':'')+'"><b>'+t.n+'</b><br><span class="s">'+(me.team===i?'You':t.taken?'Taken':'Free')+'</span><br>'+(!t.taken||me.team===i?'<button onclick="send({t:\'claim\',team:'+i+'})">'+(me.team===i?'Selected':'Claim')+'</button>':'')+'</div>').join('')+'</div>';
+    h+=me.host?'<button class="big" onclick="send({t:\'start\'})">Start auction</button>':'<p class="s">Waiting for the host to start.</p>';
+  }else{
+    if(S.status==='live'){
+      const p=S.cur.p;
+      h+='<div class="card"><div class="s">'+SN[p.s]+' | '+RN[p.r]+' | '+(p.os?'Overseas':'Indian')+' | Lot '+(S.ix+1)+'/'+S.ql+(S.r2?' | Accelerated round '+S.r2:'')+'</div><div style="font-size:24px;font-weight:500">'+p.n+'</div><div class="s">Base '+fmt(p.b)+'</div><div style="font-size:28px;font-weight:500">'+fmt(S.cur.bidder==null?p.b:S.cur.bid)+'</div><div class="s">'+(S.cur.bidder==null?'No bids yet':S.T[S.cur.bidder].n+' leads')+'</div><div style="margin-top:6px"><b>'+S.timer+' s</b> | '+(S.paused?'Paused':call())+'</div><div class="s" style="color:#A32D2D">'+err+'</div><div class="s">'+S.msg+'</div></div>';
+      if(me.team>=0)h+='<button class="big" onclick="send({t:\'bid\'})">Bid '+fmt(nextAmt())+' for '+S.T[me.team].n+'</button>';
+      else h+='<p class="s">You are spectating.</p>';
+      if(me.host)h+='<div style="margin:8px 0"><button onclick="send({t:\'pause\'})">'+(S.paused?'Resume':'Pause')+'</button><button onclick="send({t:\'hammer\'})">'+(S.cur.bidder==null?'Mark unsold':'Hammer down')+'</button><button onclick="send({t:\'skip\'})">Skip set</button></div>';
+    }else h+='<div class="card"><b>Auction complete</b></div>';
+    h+='<div class="g">'+S.T.map((t,i)=>'<div class="card'+(S.cur&&S.cur.bidder===i?' lead':'')+'"><b>'+t.n+(me.team===i?' (you)':'')+'</b><div class="s">Purse '+fmt(t.purse)+'</div><div class="s">Squad '+t.sq.length+'/'+S.cfg.mx+' | OS '+t.os+'/'+S.cfg.ov+'</div>'+(S.status==='live'?'<div class="s">Max bid '+fmt(Math.max(0,maxBid(t)))+'</div>':'')+'</div>').join('')+'</div>';
+    h+='<p>View squad <select onchange="view=+this.value;draw()">'+S.T.map((t,i)=>'<option value="'+i+'"'+(view===i?' selected':'')+'>'+t.n+'</option>').join('')+'</select></p>';
+    const sq=S.T[view].sq;
+    h+=sq.length?'<table><tr><th>Player</th><th>Role</th><th>Price</th></tr>'+sq.map(p=>'<tr><td>'+p.n+(p.os?' (OS)':'')+'</td><td>'+RN[p.r]+'</td><td>'+fmt(p.price)+'</td></tr>').join('')+'</table>':'<p class="s">No players yet.</p>';
+    h+='<h4>Recent results</h4>'+S.log.map(l=>'<div class="s">'+l+'</div>').join('');
+  }
+  A.innerHTML=h;
+}
+draw();
+</script>
